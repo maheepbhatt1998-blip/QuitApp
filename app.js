@@ -2,7 +2,7 @@
 import * as D from './dates.js';
 import * as T from './taper.js';
 import * as S from './stats.js';
-import { load, save, exportJSON, importJSON, clear, defaultState } from './store.js';
+import { load, save, exportJSON, importJSON, clear, defaultState, loadUI, saveUI, probeStorage } from './store.js';
 import { HEALTH_MILESTONES, BADGES, HEALTH_SOURCES, HEALTH_NOTE } from './content/health.js';
 import { LESSONS, TRACKS } from './content/program.js';
 import { TRIGGERS } from './content/distractions.js';
@@ -18,10 +18,14 @@ const CURRENCIES = ['USD', 'EUR', 'GBP', 'INR', 'CAD', 'AUD', 'JPY'];
 const IDENTITY_IDEAS = ["I'm someone who doesn't smoke.", "I don't smoke. I never did it well anyway.", 'I breathe easy.', 'My lungs are mine.'];
 
 let state = load();
-let screen = 'home';
+let ui = loadUI();                 // where the user left off; restored on launch
+let screen = ['home', 'progress', 'program', 'settings'].includes(ui.screen) ? ui.screen : 'home';
 let setup = null;
 let overlayOpen = false;
 let celebrating = false;
+let storageOk = probeStorage();
+let openLessonId = null;
+function remember(patch) { ui = { ...ui, ...patch }; saveUI(ui); }
 
 const $ = s => document.querySelector(s);
 const app = $('#app'), tabbar = $('#tabbar'), sosBtn = $('#sos-btn'), overlay = $('#overlay'), toastEl = $('#toast'), importFile = $('#import-file');
@@ -29,7 +33,47 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const now = () => Date.now();
 
 // ---------- helpers ----------
-function persist() { if (!save(state)) toast('Could not save. Is storage blocked in this browser?'); }
+function persist() {
+  if (!save(state) && storageOk) { storageOk = false; toast('This browser is not saving your data.'); render(); }
+}
+function storageBanner() {
+  return `<section class="card warn" role="alert"><strong>This browser is not saving your data.</strong>
+    <p class="muted" style="margin:4px 0 0">Anything you enter will be gone next time. Private or incognito tabs, and links opened inside messaging or social apps, do this. Open the app in your normal browser, or install it to your home screen.</p></section>`;
+}
+function isStandalone() {
+  return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+}
+// Links opened inside messaging, mail or social apps load in that app's own web view, whose storage
+// is often thrown away when the app closes. Nudge toward a real browser or the home screen.
+function inAppBrowser() {
+  const ua = navigator.userAgent || '';
+  if (isStandalone()) return false;
+  if (/Android/.test(ua) && /\bwv\b/.test(ua)) return true;
+  if (/FBAN|FBAV|Instagram|Line\/|Twitter|MicroMessenger|GSA\/|Snapchat|LinkedInApp/.test(ua)) return true;
+  if (/iPhone|iPad|iPod/.test(ua) && !/Safari\//.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua)) return true;
+  return false;
+}
+function inAppHint() {
+  if (ui.inAppHintDismissed || !inAppBrowser()) return '';
+  return `<section class="card warn"><strong>This looks like another app's built-in browser.</strong>
+    <p class="muted" style="margin:4px 0 0">Data saved here can vanish when that app closes. Open this page in Chrome or Safari instead, then add it to your home screen.</p>
+    <button class="btn-link" data-act="dismiss-inapp">Got it</button></section>`;
+}
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault(); installPrompt = e;
+  if (state.settings && screen === 'settings' && !overlayOpen) render();
+});
+function installCard() {
+  if (isStandalone()) return '';
+  if (installPrompt) {
+    return `<section class="card settings"><h2>Install</h2><p class="muted">Put it on your home screen: it opens full-screen, works offline, and the browser treats its data as permanent.</p><button class="btn btn-ghost" data-act="install">Install on this device</button></section>`;
+  }
+  if (/iPhone|iPad|iPod/.test(navigator.userAgent)) {
+    return `<section class="card settings"><h2>Install</h2><p class="muted">In Safari, tap the Share button, then "Add to Home Screen". It then opens like an app and keeps its own data, separate from Safari tabs.</p></section>`;
+  }
+  return '';
+}
 let toastTimer;
 function toast(msg, ms = 2800) {
   toastEl.textContent = msg; toastEl.hidden = false;
@@ -77,6 +121,8 @@ function showOverlay(html) {
 function hideOverlay() {
   overlayOpen = false; overlay.hidden = true; overlay.innerHTML = '';
   sosBtn.hidden = !state.settings;
+  openLessonId = null;
+  if (ui.lesson || ui.sos || ui.lessonScroll) remember({ lesson: null, sos: null, lessonScroll: 0 });
 }
 
 // ---------- render ----------
@@ -89,6 +135,8 @@ function render() {
   else if (screen === 'progress') app.innerHTML = renderProgress(c);
   else if (screen === 'program') app.innerHTML = renderProgram(c);
   else app.innerHTML = renderSettings(c);
+  const notices = (storageOk ? '' : storageBanner()) + inAppHint();
+  if (notices) app.insertAdjacentHTML('afterbegin', notices);
   updateTimers();
   if (!overlayOpen) maybeCelebrate(c);
 }
@@ -248,24 +296,30 @@ function renderProgram(c) {
   return `<div class="screen-title"><h1>Program</h1></div><p class="muted" style="margin-bottom:12px">One short lesson a day, each with a task. Missed days stay open; there is no streak to lose here.</p>${sections}`;
 }
 
-function openLesson(id) {
+function openLesson(id, { restore = false } = {}) {
   const l = LESSONS.find(x => x.id === id);
   if (!l) return;
   const saved = state.lessons[id] || {};
   const tr = TRACKS.find(t => t.id === l.track);
+  const draft = ui.draft && ui.draft.id === id ? ui.draft.text : null; // unsaved typing survives a reload
+  const answer = draft != null ? draft : (saved.answer || '');
   showOverlay(`<header class="ov-head"><button class="btn-link" data-act="close-overlay">‹ Back</button><span class="muted">${esc(tr.title)} · Day ${l.day}</span></header>
     <div class="lesson-body"><h1>${esc(l.title)}</h1>${l.body.map(p => `<p>${esc(p)}</p>`).join('')}</div>
     <section class="card task"><h3>Today's task</h3><p>${esc(l.task.prompt)}</p>
-      <textarea id="task-answer" rows="5" placeholder="${esc(l.task.placeholder || 'Write it here. It stays on this device.')}">${esc(saved.answer || '')}</textarea>
+      <textarea id="task-answer" rows="5" placeholder="${esc(l.task.placeholder || 'Write it here. It stays on this device.')}">${esc(answer)}</textarea>
       <button class="btn btn-big" data-act="lesson-done" data-id="${id}">${saved.doneAt ? 'Save changes' : 'Save and mark done'}</button>
       ${saved.doneAt ? `<p class="tiny" style="margin:8px 0 0">Completed ${new Date(saved.doneAt).toLocaleDateString()}</p>` : ''}
+      ${draft != null && !saved.doneAt ? '<p class="tiny" style="margin:8px 0 0">Your unsaved notes were kept.</p>' : ''}
     </section>`);
+  openLessonId = id;
+  if (restore && ui.lesson === id && ui.lessonScroll) overlay.scrollTop = ui.lessonScroll;
+  remember({ lesson: id });
 }
 function completeLesson(id) {
   const answer = $('#task-answer')?.value || '';
   const prev = state.lessons[id] || {};
   state.lessons[id] = { doneAt: prev.doneAt || now(), answer };
-  persist(); hideOverlay(); toast('Saved.'); render();
+  persist(); remember({ draft: null }); hideOverlay(); toast('Saved.'); render();
 }
 
 // ---------- settings ----------
@@ -323,6 +377,7 @@ function renderSettings(c) {
     <section class="card settings"><h2>Your reasons</h2>${reasonFields(d)}</section>
     <button class="btn btn-big" data-act="settings-save">Save changes</button>
     <section class="card settings" style="margin-top:12px"><h2>Reminders</h2><p class="muted">Without an account or server, a web app can only remind you while it is open. For a dependable daily nudge, set a phone alarm at the time you want to read the lesson. The home screen will always show it.</p></section>
+    ${installCard()}
     <section class="card settings"><h2>Backup</h2><p class="muted">Everything lives in this browser. Export a copy now and then, or to move between phone and laptop.</p>
       <div class="btn-row"><button class="btn btn-ghost" data-act="export">Export JSON</button><button class="btn btn-ghost" data-act="import">Import JSON</button></div></section>
     <section class="card settings"><h2>About the evidence</h2>
@@ -408,8 +463,9 @@ function renderSetup() {
       break;
     }
   }
-  app.innerHTML = `<div class="setup"><div class="steps">${[0, 1, 2, 3, 4].map(i => `<span class="dot ${i <= setup.step ? 'on' : ''}"></span>`).join('')}</div>${html}${setup.step > 0 ? `<div style="text-align:center;margin-top:8px"><button class="btn-link" data-act="setup-back">‹ Back</button></div>` : ''}</div>`;
+  app.innerHTML = `${storageOk ? '' : storageBanner()}${inAppHint()}<div class="setup"><div class="steps">${[0, 1, 2, 3, 4].map(i => `<span class="dot ${i <= setup.step ? 'on' : ''}"></span>`).join('')}</div>${html}${setup.step > 0 ? `<div style="text-align:center;margin-top:8px"><button class="btn-link" data-act="setup-back">‹ Back</button></div>` : ''}</div>`;
   window.scrollTo(0, 0);
+  remember({ setup: { step: setup.step, draft: setup.draft } });
 }
 function setupNext() {
   const d = setup.draft;
@@ -426,7 +482,8 @@ function setupNext() {
     const err = validate(d, { allowPastQuit: false });
     if (err) { toast(err); setup.step = 2; renderSetup(); return; }
     state.settings = { ...d, startDate: D.dayKey(), startedAt: now() };
-    persist(); setup = null; screen = 'home'; render();
+    persist(); setup = null; screen = 'home'; remember({ setup: null, screen: 'home' }); render();
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
     toast(T.taperLength(state.settings) > 0 ? 'Set. Log each one as you have it.' : 'Set. The clock is running.');
     return;
   }
@@ -476,9 +533,10 @@ function liveStats(c) {
   return items;
 }
 let sosHandle = null;
-function openSOS() {
+function openSOS(resume = null) {
   const c = ctx();
   overlayOpen = true; sosBtn.hidden = true; overlay.hidden = false;
+  const close = () => { sosHandle = null; hideOverlay(); render(); };
   sosHandle = startSOS({
     mount: overlay,
     reasons: (c.s.reasons || []).filter(Boolean),
@@ -487,14 +545,17 @@ function openSOS() {
     products: c.products.map(p => ({ id: p, label: PRODUCT_META[p].label })),
     triggers: TRIGGERS,
     liveStats: () => liveStats(ctx()),
-    onDone: craving => {
+    resume,
+    onChange: snap => remember({ sos: snap }),
+    onRecord: craving => {
       state.cravings.push(craving);
       if (craving.outcome === 'used' && craving.product) {
         state.uses.push({ t: now(), product: craving.product, kind: c.phase === 'quit' ? 'slip' : 'use' });
       }
-      sosHandle = null; persist(); hideOverlay(); render();
+      persist();
     },
-    onCancel: () => { sosHandle = null; hideOverlay(); render(); },
+    onClose: close,
+    onCancel: close,
   });
 }
 
@@ -570,7 +631,7 @@ document.addEventListener('click', e => {
   if (!el) return;
   const act = el.dataset.act, d = el.dataset;
   switch (act) {
-    case 'nav': screen = d.screen; window.scrollTo(0, 0); render(); break;
+    case 'nav': screen = d.screen; remember({ screen }); render(); window.scrollTo(0, (ui.scroll && ui.scroll[screen]) || 0); break;
     case 'use': logUse(d.product, 'use'); break;
     case 'undo': undoLast(d.product); break;
     case 'slip': openSlipSheet(); break;
@@ -589,7 +650,9 @@ document.addEventListener('click', e => {
     case 'export': doExport(); break;
     case 'import': importFile.click(); break;
     case 'reset': confirmReset(); break;
-    case 'reset-confirm': clear(); state = defaultState(); setup = null; screen = 'home'; hideOverlay(); render(); break;
+    case 'install': if (installPrompt) { installPrompt.prompt(); installPrompt = null; } break;
+    case 'dismiss-inapp': remember({ inAppHintDismissed: true }); render(); break;
+    case 'reset-confirm': clear(); state = defaultState(); ui = {}; setup = null; openLessonId = null; screen = 'home'; hideOverlay(); render(); break;
   }
 });
 document.addEventListener('change', e => {
@@ -608,9 +671,33 @@ document.addEventListener('keydown', e => {
   if (e.key !== 'Escape' || !overlayOpen || celebrating) return;
   if (sosHandle) sosHandle.cancel(); else { hideOverlay(); render(); }
 });
+// Keep typing and scroll position so a reload (phones do this to backgrounded apps) lands you back where you were.
+document.addEventListener('input', e => {
+  if (e.target.id === 'task-answer' && openLessonId) remember({ draft: { id: openLessonId, text: e.target.value } });
+  else if (setup && app.contains(e.target)) { readForm(setup.draft); remember({ setup: { step: setup.step, draft: setup.draft } }); }
+});
+let scrollTimer;
+window.addEventListener('scroll', () => {
+  if (overlayOpen || setup) return;
+  clearTimeout(scrollTimer);
+  scrollTimer = setTimeout(() => remember({ scroll: { ...(ui.scroll || {}), [screen]: Math.round(window.scrollY) } }), 250);
+}, { passive: true });
+overlay.addEventListener('scroll', () => {
+  if (!openLessonId) return;
+  clearTimeout(scrollTimer);
+  scrollTimer = setTimeout(() => remember({ lessonScroll: Math.round(overlay.scrollTop) }), 250);
+}, { passive: true });
 
 // ---------- boot ----------
+if (!state.settings && ui.setup && ui.setup.draft) setup = { step: ui.setup.step || 0, draft: ui.setup.draft };
+const resumeSOS = state.settings && ui.sos && ui.sos.startedAt && now() - ui.sos.startedAt < 60 * 60000 ? ui.sos : null;
+const resumeLesson = state.settings && !resumeSOS && ui.lesson && LESSONS.some(l => l.id === ui.lesson) ? ui.lesson : null;
+if (resumeSOS || resumeLesson) overlayOpen = true; // so the first render does not start a celebration underneath
 render();
+if (resumeSOS) openSOS(resumeSOS);
+else if (resumeLesson) openLesson(resumeLesson, { restore: true });
+else if (state.settings) window.scrollTo(0, (ui.scroll && ui.scroll[screen]) || 0);
+if (state.settings && navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('sw.js').catch(err => console.warn('Service worker not registered', err));
 }

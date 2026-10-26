@@ -1,16 +1,23 @@
 // Craving SOS flow: rate -> surf (3 min breathing) -> why -> distract / game -> outcome -> summary.
+// Every state change is reported through onChange so the app can persist it and resume the flow
+// after the browser reloads the page, which phones do to apps left in the background.
 import { fmtDuration } from './dates.js';
 import { DISTRACTIONS, ACT_PROMPTS } from './content/distractions.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-export function startSOS({ mount, reasons, identity, phase, products, triggers, liveStats, onDone, onCancel }) {
-  const st = {
+export function startSOS({ mount, reasons, identity, phase, products, triggers, liveStats, onRecord, onClose, onCancel, onChange, resume }) {
+  const fresh = {
     step: 'rate', startedAt: Date.now(), intensityBefore: 6, intensityAfter: null, trigger: null,
     product: products.length === 1 ? products[0].id : null, pendingOutcome: null, distraction: null, lastD: -1,
-    timers: [], record: null,
+    surfStart: null, record: null,
   };
+  const st = resume ? { ...fresh, ...resume } : fresh;
+  if (st.step === 'game') st.step = 'distract'; // a half-played game is not worth resuming
+  st.timers = [];
 
+  function snapshot() { const { timers, ...rest } = st; return rest; }
+  function changed() { if (onChange) onChange(snapshot()); }
   function clearTimers() { st.timers.forEach(clearInterval); st.timers = []; }
   function cleanup() { clearTimers(); mount.onclick = null; mount.oninput = null; }
 
@@ -20,6 +27,7 @@ export function startSOS({ mount, reasons, identity, phase, products, triggers, 
     mount.scrollTop = 0;
     if (st.step === 'surf') startSurf();
     if (st.step === 'game') startGame();
+    changed();
   }
 
   function head(label) {
@@ -110,7 +118,7 @@ export function startSOS({ mount, reasons, identity, phase, products, triggers, 
     const after = st.intensityAfter ?? Math.max(1, st.intensityBefore - (used ? 0 : 3));
     st.intensityAfter = after;
     return head(used ? 'Logging it' : 'Nice work') +
-      `<h1>${used ? 'How strong is it now?' : 'How strong is it now?'}</h1>
+      `<h1>How strong is it now?</h1>
        <div class="int-value" id="sos-int2-v">${after}</div>
        <input type="range" id="sos-int2" min="1" max="10" value="${after}" aria-label="Craving intensity now">
        <div class="int-scale"><span>mild</span><span>overwhelming</span></div>
@@ -147,13 +155,14 @@ export function startSOS({ mount, reasons, identity, phase, products, triggers, 
   }
 
   function startSurf() {
-    const start = Date.now(), total = 180;
+    if (!st.surfStart) st.surfStart = Date.now();
+    const total = 180;
     const timerEl = mount.querySelector('#surf-timer');
     const phaseEl = mount.querySelector('#surf-phase');
     const promptEl = mount.querySelector('#surf-prompt');
     const stillBtn = mount.querySelector('#surf-still');
     const tick = () => {
-      const el = (Date.now() - start) / 1000;
+      const el = (Date.now() - st.surfStart) / 1000;
       const left = Math.max(0, total - el);
       timerEl.textContent = left > 0 ? `${Math.floor(left / 60)}:${String(Math.floor(left % 60)).padStart(2, '0')}` : 'Three minutes. Still here.';
       const ph = el % 12;
@@ -208,6 +217,7 @@ export function startSOS({ mount, reasons, identity, phase, products, triggers, 
     };
     if (st.pendingOutcome === 'used') st.record.product = st.product || (products[0] && products[0].id);
     st.step = 'summary';
+    if (onRecord) onRecord(st.record); // saved now, so a reload on the summary screen loses nothing
     render();
   }
 
@@ -230,12 +240,12 @@ export function startSOS({ mount, reasons, identity, phase, products, triggers, 
       case 'back-distract': st.step = 'distract'; pickDistraction(); render(); break;
       case 'used': st.pendingOutcome = 'used'; st.step = 'outcome'; render(); break;
       case 'finish': finish(); break;
-      case 'close': cleanup(); onDone(st.record); break;
+      case 'close': cleanup(); if (onClose) onClose(); break;
     }
   };
   mount.oninput = e => {
-    if (e.target.id === 'sos-int') { st.intensityBefore = +e.target.value; mount.querySelector('#sos-int-v').textContent = e.target.value; }
-    if (e.target.id === 'sos-int2') { st.intensityAfter = +e.target.value; mount.querySelector('#sos-int2-v').textContent = e.target.value; }
+    if (e.target.id === 'sos-int') { st.intensityBefore = +e.target.value; mount.querySelector('#sos-int-v').textContent = e.target.value; changed(); }
+    if (e.target.id === 'sos-int2') { st.intensityAfter = +e.target.value; mount.querySelector('#sos-int2-v').textContent = e.target.value; changed(); }
   };
 
   render();

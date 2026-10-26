@@ -33,7 +33,23 @@ export function save(state) {
 }
 
 export function clear() {
-  try { localStorage.removeItem(KEY); } catch { /* ignore */ }
+  try { localStorage.removeItem(KEY); localStorage.removeItem(UI_KEY); } catch { /* ignore */ }
+}
+
+// Where the user left off: screen, open lesson, unsaved draft, scroll positions, an in-progress SOS flow.
+// Kept apart from the data so a bad UI snapshot can never take the data down with it.
+const UI_KEY = 'quitapp.ui';
+export function loadUI() {
+  try { return JSON.parse(localStorage.getItem(UI_KEY)) || {}; } catch { return {}; }
+}
+export function saveUI(ui) {
+  try { localStorage.setItem(UI_KEY, JSON.stringify(ui)); } catch { /* ignore */ }
+}
+
+// True when this browser will actually keep what we write.
+export function probeStorage() {
+  try { localStorage.setItem('quitapp.probe', '1'); localStorage.removeItem('quitapp.probe'); return true; }
+  catch { return false; }
 }
 
 export function exportJSON(state) {
