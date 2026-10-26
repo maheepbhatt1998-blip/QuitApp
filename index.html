@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
+<meta name="description" content="A personal taper-to-quit companion for cigarettes and vaping. Data stays on your device.">
+<title>Quit</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Quit">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<main id="app" class="app" aria-live="polite"></main>
+
+<nav id="tabbar" class="tabbar" hidden aria-label="Main">
+  <div class="tabbar-inner">
+    <button class="tab" data-act="nav" data-screen="home" aria-label="Home">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10.5V20h13v-9.5"/><path d="M10 20v-5h4v5"/></svg><span>Home</span>
+    </button>
+    <button class="tab" data-act="nav" data-screen="progress" aria-label="Progress">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h16"/><path d="M6 16v-5"/><path d="M11 16V7"/><path d="M16 16v-3"/><path d="M4 9l5-4 4 3 7-5"/></svg><span>Progress</span>
+    </button>
+    <button class="tab" data-act="nav" data-screen="program" aria-label="Program">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M4 18a2.5 2.5 0 0 1 2.5-2.5H20"/><path d="M9 7h7"/><path d="M9 10.5h5"/></svg><span>Program</span>
+    </button>
+    <button class="tab" data-act="nav" data-screen="settings" aria-label="Settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg><span>Settings</span>
+    </button>
+  </div>
+</nav>
+
+<button id="sos-btn" class="sos-btn" data-act="sos" hidden aria-label="Craving SOS">SOS</button>
+<div id="overlay" class="overlay" hidden></div>
+<div id="toast" class="toast" role="status" hidden></div>
+<input id="import-file" type="file" accept="application/json,.json" hidden>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

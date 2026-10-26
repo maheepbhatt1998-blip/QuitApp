@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>QuitApp tests</title>
+<style>body{font:14px/1.5 system-ui,sans-serif;margin:16px;background:#111;color:#eee}.ok{color:#7bd88f}.fail{color:#ff7b7b}h1{font-size:18px}pre{white-space:pre-wrap}</style>
+</head><body><h1>QuitApp math tests</h1><div id="out">Running…</div>
+<script type="module">
+import { runTests } from './tests.js';
+const r = runTests();
+const failed = r.filter(x => !x.ok);
+document.getElementById('out').innerHTML =
+  `<p><strong>${r.length - failed.length}/${r.length} passed</strong></p>` +
+  r.map(x => `<div class="${x.ok ? 'ok' : 'fail'}">${x.ok ? '✓' : '✗'} ${x.name}${x.ok ? '' : `<pre>got ${JSON.stringify(x.got)}\nwant ${JSON.stringify(x.want)}</pre>`}</div>`).join('');
+</script></body></html>
